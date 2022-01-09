@@ -1,201 +1,148 @@
 from kivy.app import App
 from kivy.uix.widget import Widget
+from kivy.properties import ObjectProperty
+from kivy.uix.image import Image
+from kivy.core.window import Window
 from kivy.clock import Clock
-from kivy.properties import *
-import random
-import smooth
 
+from pipe import Pipe
 
-class Cell(Widget):
-    graphical_size = ListProperty([1, 1])
-    graphical_pos = ListProperty([1, 1])
-    color = ListProperty([1, 1, 1, 1])
+class Background(Widget):
+    cloud_texture = ObjectProperty(None)
+    floor_texture = ObjectProperty(None)
 
-    def __init__(self, x, y, size, margin=4):
-        super().__init__()
-        self.actual_size = (size, size)
-        self.graphical_size = (size - margin, size - margin)
-        self.margin = margin
-        self.actual_pos = (x, y)
-        self.graphical_pos_attach()
-        self.color = (0.2, 1.0, 0.2, 1.0)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
-    def graphical_pos_attach(self, smooth_motion=None):
-        to_x, to_y = self.actual_pos[0] - self.graphical_size[0] / 2, self.actual_pos[1] - self.graphical_size[1] / 2
-        if smooth_motion is None:
-            self.graphical_pos = to_x, to_y
-        else:
-            smoother, t = smooth_motion
-            smoother.move_to(self, to_x, to_y, t)
+        # Create textures
+        self.cloud_texture = Image(source="cloud.png").texture
+        self.cloud_texture.wrap = 'repeat'
+        self.cloud_texture.uvsize = (Window.width / self.cloud_texture.width, -1)
 
-    def move_to(self, x, y, **kwargs):
-        self.actual_pos = (x, y)
-        self.graphical_pos_attach(**kwargs)
+        self.floor_texture = Image(source="floor.png").texture
+        self.floor_texture.wrap = 'repeat'
+        self.floor_texture.uvsize = (Window.width / self.floor_texture.width, -1)
 
-    def move_by(self, x, y, **kwargs):
-        self.move_to(self.actual_pos[0] + x, self.actual_pos[1] + y, **kwargs)
+    def on_size(self, *args):
+        self.cloud_texture.uvsize = (self.width / self.cloud_texture.width, -1)
+        self.floor_texture.uvsize = (self.width / self.floor_texture.width, -1)
 
-    def get_pos(self):
-        return self.actual_pos
+    def scroll_textures(self, time_passed):
+        # Update the uvpos of the texture
+        self.cloud_texture.uvpos = ( (self.cloud_texture.uvpos[0] + time_passed/2.0)%Window.width , self.cloud_texture.uvpos[1])
+        self.floor_texture.uvpos = ( (self.floor_texture.uvpos[0] + time_passed)%Window.width, self.floor_texture.uvpos[1])
 
-    def step_by(self, direction, **kwargs):
-        self.move_by(self.actual_size[0] * direction[0], self.actual_size[1] * direction[1], **kwargs)
+        # Redraw the texture
+        texture = self.property('cloud_texture')
+        texture.dispatch(self)
 
+        texture = self.property('floor_texture')
+        texture.dispatch(self)
 
-class Worm(Widget):
-    def __init__(self, config):
-        super().__init__()
-        self.cells = []
-        self.config = config
-        self.cell_size = config.CELL_SIZE
-        self.head_init((100, 100))
-        for i in range(config.DEFAULT_LENGTH):
-            self.lengthen()
+from random import randint
+from kivy.properties import NumericProperty
 
-    def destroy(self):
-        for i in range(len(self.cells)):
-            self.remove_widget(self.cells[i])
-        self.cells = []
-
-    def lengthen(self, pos=None, direction=(0, 1)):
-        if pos is None:
-            px = self.cells[-1].get_pos()[0] + direction[0] * self.cell_size
-            py = self.cells[-1].get_pos()[1] + direction[1] * self.cell_size
-            pos = (px, py)
-        self.cells.append(Cell(*pos, self.cell_size, margin=self.config.MARGIN))
-        self.add_widget(self.cells[-1])
-
-    def head_init(self, pos):
-        self.lengthen(pos=pos)
-
-    def move(self, direction, **kwargs):
-        for i in range(len(self.cells) - 1, 0, -1):
-            self.cells[i].move_to(*self.cells[i - 1].get_pos(), **kwargs)
-        self.cells[0].step_by(direction, **kwargs)
-
-    def gather_positions(self):
-        return [cell.get_pos() for cell in self.cells]
-
-    def head_intersect(self, cell):
-        return self.cells[0].get_pos() == cell.get_pos()
-
-
-class Form(Widget):
-    worm_len = NumericProperty(0)
-
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.worm = None
-        self.cur_dir = (0, 0)
-        self.fruit = None
-        self.game_on = True
-        self.smooth = smooth.XSmooth(["graphical_pos[0]", "graphical_pos[1]"])
-
-    def random_cell_location(self, offset):
-        x_row = self.size[0] // self.config.CELL_SIZE
-        x_col = self.size[1] // self.config.CELL_SIZE
-        return random.randint(offset, x_row - offset), random.randint(offset, x_col - offset)
-
-    def random_location(self, offset):
-        x_row, x_col = self.random_cell_location(offset)
-        return self.config.CELL_SIZE * x_row, self.config.CELL_SIZE * x_col
-
-    def fruit_dislocate(self):
-        x, y = self.random_location(2)
-        while (x, y) in self.worm.gather_positions():
-            x, y = self.random_location(2)
-        self.fruit.move_to(x, y)
-
-    def start(self):
-        self.worm = Worm(self.config)
-        self.add_widget(self.worm)
-        if self.fruit is not None:
-            self.remove_widget(self.fruit)
-        self.fruit = Cell(0, 0, self.config.APPLE_SIZE)
-        self.fruit.color = (1.0, 0.2, 0.2, 1.0)
-        self.fruit_dislocate()
-        self.add_widget(self.fruit)
-        self.game_on = True
-        self.cur_dir = (0, -1)
-        Clock.schedule_interval(self.update, self.config.INTERVAL)
-        self.popup_label.text = ""
-
-    def stop(self, text=""):
-        self.game_on = False
-        self.popup_label.text = text
-        Clock.unschedule(self.update)
-
-    def game_over(self):
-        self.stop("GAME OVER" + " " * 5 + "\ntap to reset")
-
-    def align_labels(self):
-        try:
-            self.popup_label.pos = ((self.size[0] - self.popup_label.width) / 2, self.size[1] / 2)
-            self.score_label.pos = ((self.size[0] - self.score_label.width) / 2, self.size[1] - 80)
-        except:
-            print(self.__dict__)
-            assert False
-
-    def update(self, _):
-        if not self.game_on:
-            return
-        self.worm.move(self.cur_dir, smooth_motion=(self.smooth, self.config.INTERVAL))
-        if self.worm.head_intersect(self.fruit):
-            directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
-            self.worm.lengthen(direction=random.choice(directions))
-            self.fruit_dislocate()
-        cell = self.worm_bite_self()
-        if cell:
-            cell.color = (1.0, 0.2, 0.2, 1.0)
-            self.game_over()
-        self.worm_len = len(self.worm.cells)
-        self.align_labels()
+class Bird(Image):
+    velocity = NumericProperty(0)
 
     def on_touch_down(self, touch):
-        if not self.game_on:
-            self.worm.destroy()
-            self.start()
-            return
-        ws = touch.x / self.size[0]
-        hs = touch.y / self.size[1]
-        aws = 1 - ws
-        if ws > hs and aws > hs:
-            cur_dir = (0, -1)
-        elif ws > hs >= aws:
-            cur_dir = (1, 0)
-        elif ws <= hs < aws:
-            cur_dir = (-1, 0)
-        else:
-            cur_dir = (0, 1)
-        self.cur_dir = cur_dir
+        self.source = "bird2.png"
+        self.velocity = 200
+        super().on_touch_down(touch)
 
-    def worm_bite_self(self):
-        for cell in self.worm.cells[1:]:
-            if self.worm.head_intersect(cell):
-                return cell
-        return False
+    def on_touch_up(self, touch):
+        self.source = "bird1.png"
+        super().on_touch_up(touch)
 
 
-class Config:
-    DEFAULT_LENGTH = 3
-    CELL_SIZE = 25
-    APPLE_SIZE = 35
-    MARGIN = 4
-    INTERVAL = 0.3
-    DEAD_CELL = (1, 0, 0, 1)
-    APPLE_COLOR = (1, 1, 0, 1)
+
+class MainApp(App):
+    pipes = []
+    GRAVITY = 300
+    running_time = 1
+    was_colliding = False
+
+    #def on_start(self):
+    #    Clock.schedule_interval(self.root.ids.background.scroll_textures, 1/60.)
+
+    def move_bird(self, time_passed):
+        bird = self.root.ids.bird
+        bird.y = bird.y + bird.velocity * time_passed
+        bird.velocity = bird.velocity - self.GRAVITY * time_passed
+        self.check_collision()
+
+    def check_collision(self):
+        bird = self.root.ids.bird
+        # Go through each pipe and check if it collides
+        is_colliding = False
+        for pipe in self.pipes:
+            if pipe.collide_widget(bird):
+                is_colliding = True
+                # Check if bird is between the gap
+                if bird.y < (pipe.pipe_center - pipe.GAP_SIZE/2.0):
+                    self.game_over()
+                if bird.top > (pipe.pipe_center + pipe.GAP_SIZE/2.0):
+                    self.game_over()
+        if bird.y < 96:
+            self.game_over()
+        if bird.top > Window.height:
+            self.game_over()
+
+        if self.was_colliding and not is_colliding:
+            self.root.ids.score.text = str(int(self.root.ids.score.text)+1)
+        self.was_colliding = is_colliding
+
+    def game_over(self):
+        self.root.ids.bird.pos = (20, (self.root.height - 96) / 2.0)
+        for pipe in self.pipes:
+            self.root.remove_widget(pipe)
+        self.frames.cancel()
+        self.root.ids.start_button.disabled = False
+        self.root.ids.start_button.opacity = 1
 
 
-class WormApp(App):
-    def build(self):
-        self.config = Config()
-        self.form = Form(self.config)
-        return self.form
+    def next_frame(self, time_passed):
+        self.running_time += 0.001 #
+        self.move_bird(time_passed)
+        self.move_pipes(time_passed * self.running_time) #
+        self.root.ids.background.scroll_textures(time_passed)
+        # print(self.running_time) #
 
-    def on_start(self):
-        self.form.start()
+    def start_game(self):
+        self.root.ids.score.text = "0"
+        self.was_colliding = False
+        self.pipes = []
+        #Clock.schedule_interval(self.move_bird, 1/60.)
+        self.frames = Clock.schedule_interval(self.next_frame, 1/60.)
 
+        # Create the pipes
+        num_pipes = 5
+        distance_between_pipes = Window.width / (num_pipes - 1)
+        for i in range(num_pipes):
+            pipe = Pipe()
+            pipe.pipe_center = randint(96 + 100, self.root.height - 100)
+            pipe.size_hint = (None, None)
+            pipe.pos = (Window.width + i*distance_between_pipes, 96)
+            pipe.size = (64, self.root.height - 96)
 
-if __name__ == '__main__':
-    WormApp().run()
+            self.pipes.append(pipe)
+            self.root.add_widget(pipe)
+
+        # Move the pipes
+        #Clock.schedule_interval(self.move_pipes, 1/60.)
+
+    def move_pipes(self, time_passed):
+        # Move pipes
+        for pipe in self.pipes:
+            pipe.x -= time_passed * 100
+
+        # Check if we need to reposition the pipe at the right side
+        num_pipes = 5
+        distance_between_pipes = Window.width / (num_pipes - 1)
+        pipe_xs = list(map(lambda pipe: pipe.x, self.pipes))
+        right_most_x = max(pipe_xs)
+        if right_most_x <= Window.width - distance_between_pipes:
+            most_left_pipe = self.pipes[pipe_xs.index(min(pipe_xs))]
+            most_left_pipe.x = Window.width
+
+MainApp().run()
